@@ -16,6 +16,12 @@ from sys import argv
 class Recomendations():
 
     def __init__(self, path, mode, wv):
+        """
+        Режим инициализации: получение векторных представлений слов (эмбеддингов),
+        их сохранение для последующего использования
+        Режим использования: загрузка готовых эмбеддингов и исользование
+        для подбора рекомендаций.
+        """
         self.products = None
         self.interactions = None
         self.wv = None
@@ -33,14 +39,18 @@ class Recomendations():
             self.index_words_set = set(self.wv.index_to_key)
             self.variable_initialization(self.wv)
 
-
     def get_data(self, path):
-            df = pd.read_csv(path)
-            self.products = df.copy()
-        
-
+        """
+        Получение данных об актуальных товарах в pandas DataFrame
+        """
+        df = pd.read_csv(path)
+        self.products = df.copy()
 
     def get_interactions(self, uname):
+        """
+        Получение из базы данных информации о товарах, 
+        с которыми взаимодействовал пользователь
+        """
         #os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = path/to/serviceAccountKey.json
         cred = credentials.Certificate(os.environ['GOOGLE_APPLICATION_CREDENTIALS'])
         firebase_admin.initialize_app(cred, {
@@ -54,6 +64,10 @@ class Recomendations():
         self.interactions.extend([int(k) for k in structure[uname]['wishlist'].keys()])
 
     def get_avg_vector(self, words, wv, num_features, index_words_set):
+        """
+        Получение векторного представления предложения путём усреднения 
+        векторов входящих в него слов
+        """
         feature_vec = np.zeros((num_features, ), dtype='float32')
         n_words = 0
         for word in words:
@@ -65,6 +79,10 @@ class Recomendations():
         return feature_vec    
     
     def preprocess(self, text, stop_words_dict):
+        """
+        Предобработка текста (очистка от ненужных символов,
+        приведение слов к нижнему регистру, удаление стоп слов)
+        """
         word_list = []
         for word in re.findall("[а-яА-Яa-zA-ZёЁ]+", text.lower()):
             if word not in stop_words_dict:
@@ -72,6 +90,9 @@ class Recomendations():
         return word_list
 
     def variable_initialization(self, wv, products_descriptions = None):
+        """
+        Инициализация необходимых переменных.
+        """
         if products_descriptions is None:
             products_descriptions = []
             for i in trange(0, self.products['name'].shape[0]):
@@ -83,6 +104,12 @@ class Recomendations():
             self.embeddings[i] = self.get_avg_vector(products_descriptions[i], self.wv, 200, self.index_words_set)
 
     def get_products_embeddings(self):
+        """
+        Обучение модели word2vec на текстовых названиях товаров. 
+        Формирование векторов для всех слов, использованных в названиях.
+        Получение векторного представления для текстовых названий товаров
+        (внутри метода self.variable_initialization())
+        """
         products_descriptions = []
         for i in trange(0, self.products['name'].shape[0]):
             products_descriptions.append(self.preprocess(self.products['name'].loc[i], self.stop_words_dict))
@@ -95,6 +122,16 @@ class Recomendations():
         self.variable_initialization(self.model.wv, products_descriptions)
             
     def get_rec_U2I(self):
+        """
+        Получение рекомендаций для конкретного пользователя:
+        1) объединение текстовых названий товаров, с которыми взаимодействовал
+        пользователь, в одну строку и её предобработка;
+        2) получение усредненного вектора для этой строки
+        3) нахождение косинусной близости для вектора товаров 
+        конкретного пользователя с каждым из остальных товаров
+        4) топ 10 товаров по полученной метрике - рекомендации
+        для данного пользователя
+        """
         user_vector = " ".join(self.products[self.products['article']==_id]['name'].to_string() for _id in self.interactions)
         user_processed = self.preprocess(user_vector, self.stop_words_dict)
         user_emb = self.get_avg_vector(user_processed, self.wv, 200, self.index_words_set)
